@@ -19,17 +19,10 @@ app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite (Puerto por defecto)
-        "http://localhost:5174",  # Vite (Puerto alternativo si 5173 está ocupado)
-        "http://localhost:3000",   # Otro puerto si lo usas
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=[settings.FRONTEND_URL],
     allow_credentials=True,
-    allow_methods=["*"],  # Permitir todos los métodos (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],  # Permitir todos los headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 #Endpoints cru
@@ -45,7 +38,7 @@ async def get_personas(db: AsyncSession = Depends(get_db)):
         return personas
     except Exception as e:
         print(f"❌ Error en get_personas: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error al obtener personas: {str(e)}")
 
 # GET: Obtener una persona por ID
 @app.get("/personas/{persona_id}", response_model=PersonaResponse)
@@ -425,3 +418,43 @@ async def delete_asistencia(asistencia_id: int, db: AsyncSession = Depends(get_d
     await db.delete(db_asistencia)
     await db.commit()
 
+@app.post("/instancias/{instancia_id}/registrar", status_code=status.HTTP_201_CREATED)
+async def registrar_persona_instancia(instancia_id: int, data: dict, db: AsyncSession = Depends(get_db)):
+    """Registra una persona en una instancia como inasistente por defecto"""
+    persona_id = data.get("persona_id")
+    asistio = data.get("asistio", False)
+    
+    if not persona_id:
+        raise HTTPException(status_code=400, detail="persona_id es requerido")
+    
+    # Verificar que la instancia exista
+    instancia_result = await db.execute(select(AsuntoInstancia).where(AsuntoInstancia.id == instancia_id))
+    if not instancia_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Instancia no encontrada")
+    
+    # Verificar que la persona exista
+    persona_result = await db.execute(select(Persona).where(Persona.id == persona_id))
+    if not persona_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Persona no encontrada")
+    
+    # Verificar que no esté duplicada
+    existing = await db.execute(
+        select(Asistencia).where(
+            (Asistencia.persona_id == persona_id) & 
+            (Asistencia.asunto_instancia_id == instancia_id)
+        )
+    )
+    if existing.scalar_one_or_none():
+        return {"message": "Persona ya está registrada"}
+    
+    # Crear registro
+    db_asistencia = Asistencia(
+        persona_id=persona_id,
+        asunto_instancia_id=instancia_id,
+        asistio=asistio
+    )
+    db.add(db_asistencia)
+    await db.commit()
+    await db.refresh(db_asistencia)
+    
+    return {"id": db_asistencia.id, "persona_id": persona_id, "asistio": asistio}
