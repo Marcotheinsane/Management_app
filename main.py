@@ -23,11 +23,15 @@ async def startup_event():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("✓ Tablas de base de datos creadas/verificadas")
+    print(f"✓ CORS permitido para: {settings.FRONTEND_URL}")
+
+# Parsear FRONTEND_URL (puede ser una o múltiples separadas por coma)
+allowed_origins = [url.strip() for url in settings.FRONTEND_URL.split(",")]
 
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
