@@ -4,17 +4,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
 
-from app.models import Persona, Asunto, AsuntoInstancia, Asistencia
+from app.models import Persona, Asunto, AsuntoInstancia, Asistencia, Base
 from app.schemas import (
     PersonaCreate, PersonaUpdate, PersonaResponse,
     AsuntoCreate, AsuntoUpdate, AsuntoResponse, AsuntoDetailResponse,
     AsuntoInstanciaCreate, AsuntoInstanciaUpdate, AsuntoInstanciaResponse, AsuntoInstanciaDetailResponse,
     AsistenciaCreate, AsistenciaUpdate, AsistenciaResponse, AsistenciaDetailResponse
 )
-from app.database import get_db
+from app.database import get_db, engine
 from app.settings import settings
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
+
+# Evento de startup para crear las tablas
+@app.on_event("startup")
+async def startup_event():
+    """Crea las tablas en la base de datos al iniciar"""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    print("✓ Tablas de base de datos creadas/verificadas")
 
 # Configurar CORS
 app.add_middleware(
