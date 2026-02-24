@@ -3,7 +3,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from app.models import Persona, Asunto, AsuntoInstancia, Asistencia, Base
 from app.schemas import (
@@ -143,6 +143,28 @@ async def delete_persona(persona_id: int, db: AsyncSession = Depends(get_db)):
 async def health_check():
     """Verifica que la API esté disponible"""
     return {"status": "online", "message": "API funcionando correctamente"}
+
+@app.get("/test-db")
+async def test_db_connection():
+    """Endpoint para diagnosticar problemas con la base de datos"""
+    try:
+        logger.info(f"Intentando conectar a: {settings.DATABASE_URL.split('@')[1] if '@' in settings.DATABASE_URL else '***'}")
+        async with engine.begin() as conn:
+            # Ejecutar query simple para verificar conexión
+            result = await conn.execute(text("SELECT 1"))
+            logger.info("✓ Conexión a BD exitosa")
+            return {
+                "status": "connected",
+                "message": "Conexión a base de datos exitosa",
+                "database": settings.DATABASE_URL.split('/')[-1] if '/' in settings.DATABASE_URL else "unknown"
+            }
+    except Exception as e:
+        logger.error(f"❌ Error de conexión a BD: {type(e).__name__}: {str(e)}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Error al conectar: {type(e).__name__}: {str(e)}",
+            "error_type": type(e).__name__
+        }
 
 
 # ========== ENDPOINTS ASUNTOS ==========
