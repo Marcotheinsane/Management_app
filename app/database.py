@@ -1,14 +1,29 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy import event, String
+import ssl
 from app.settings import settings
+
+# Procesar la URL de conexión para compatibilidad con asyncpg
+# Neon proporciona URLs con sslmode=require que asyncpg no reconoce
+database_url = settings.DATABASE_URL
+
+# Convertir sslmode=require a ssl=true para asyncpg
+if 'sslmode=require' in database_url:
+    database_url = database_url.replace('sslmode=require', 'ssl=true')
+
+print(f"📊 Conectando a BD: {database_url.split('@')[1] if '@' in database_url else '***'}")
 
 # Crear el engine asincrónico
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    database_url,
     echo=settings.DEBUG,
     future=True,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    connect_args={
+        "ssl": True,  # Forzar SSL para conexiones a Neon
+    }
 )
 
 # Crear sesión asincrónica
