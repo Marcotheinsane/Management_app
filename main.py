@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,16 +15,28 @@ from app.schemas import (
 from app.database import get_db, engine
 from app.settings import settings
 
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 
 # Evento de startup para crear las tablas
 @app.on_event("startup")
 async def startup_event():
     """Crea las tablas en la base de datos al iniciar"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("✓ Tablas de base de datos creadas/verificadas")
-    print(f"✓ CORS permitido para: {settings.FRONTEND_URL}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("✓ Tablas de base de datos creadas/verificadas")
+        print(f"✓ CORS permitido para: {settings.FRONTEND_URL}")
+        logger.info("✓ Startup completado exitosamente")
+    except Exception as e:
+        logger.error(f"❌ Error durante startup: {type(e).__name__}: {str(e)}", exc_info=True)
+        print(f"❌ Error durante startup: {type(e).__name__}: {str(e)}")
+        # No lanzar la excepción para permitir que la app inicie ugualmente y ver los logs
+        import traceback
+        print(traceback.format_exc())
 
 # Parsear FRONTEND_URL (puede ser una o múltiples separadas por coma)
 allowed_origins = [url.strip() for url in settings.FRONTEND_URL.split(",")]
