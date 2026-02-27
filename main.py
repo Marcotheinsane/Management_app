@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,12 +20,11 @@ from app.settings import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
-
-# Evento de startup para crear las tablas
-@app.on_event("startup")
-async def startup_event():
-    """Crea las tablas en la base de datos al iniciar"""
+# Manejador de lifespan para startup y shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Maneja los eventos de startup y shutdown de la aplicación"""
+    # Startup
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -34,9 +34,14 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ Error durante startup: {type(e).__name__}: {str(e)}", exc_info=True)
         print(f"❌ Error durante startup: {type(e).__name__}: {str(e)}")
-        # No lanzar la excepción para permitir que la app inicie ugualmente y ver los logs
         import traceback
         print(traceback.format_exc())
+    
+    yield
+    
+    # Shutdown (si es necesario)
+
+app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan)
 
 # Parsear FRONTEND_URL (puede ser una o múltiples separadas por coma)
 allowed_origins = [url.strip() for url in settings.FRONTEND_URL.split(",")]
@@ -505,3 +510,7 @@ async def registrar_persona_instancia(instancia_id: int, data: dict, db: AsyncSe
     await db.refresh(db_asistencia)
     
     return {"id": db_asistencia.id, "persona_id": persona_id, "asistio": asistio}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
