@@ -4,8 +4,9 @@ import jwt
 from passlib.context import CryptContext
 from app.settings import settings
 
-# Configurar contexto de hash de contraseñas
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configurar contexto de hash de contraseñas - usar argon2 en lugar de bcrypt
+# para evitar problemas de compatibilidad en Python 3.14
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 # Configuración JWT
 ALGORITHM = "HS256"
@@ -14,7 +15,7 @@ ACCESS_TOKEN_EXPIRE_HOURS = 24
 
 def hash_password(password: str) -> str:
     """
-    Hashea una contraseña usando bcrypt
+    Hashea una contraseña usando argon2
     """
     return pwd_context.hash(password)
 

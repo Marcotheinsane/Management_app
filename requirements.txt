@@ -7,5 +7,5 @@ pydantic==2.12.5
 pydantic-settings==2.3.4
 python-multipart==0.0.7
 greenlet>=2.0.0
-passlib[bcrypt]>=1.7.4
+passlib[argon2]>=1.7.4
 PyJWT>=2.11.0
