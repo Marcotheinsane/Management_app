@@ -1,8 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, text
@@ -215,9 +214,17 @@ async def test_db_connection():
 
 # ========== FUNCIONES DE AUTENTICACIÓN ==========
 
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(HTTPBearer()), db: AsyncSession = Depends(get_db)) -> Usuario:
-    """Obtiene el usuario actual desde el token JWT"""
-    token = credentials.credentials
+async def get_current_user(authorization: str = Header(None), db: AsyncSession = Depends(get_db)) -> Usuario:
+    """Obtiene el usuario actual desde el token JWT en el header Authorization"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token no proporcionado")
+    
+    # El header debe ser "Bearer {token}"
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Formato de token inválido")
+    
+    token = parts[1]
     payload = decode_token(token)
     
     if not payload:
