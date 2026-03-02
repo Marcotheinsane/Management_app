@@ -51,8 +51,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 #Endpoints cru
@@ -177,34 +179,73 @@ async def test_db_connection():
 @app.get("/asuntos/", response_model=list[AsuntoDetailResponse])
 async def get_asuntos(db: AsyncSession = Depends(get_db)):
     """Obtiene la lista de todos los asuntos"""
-    result = await db.execute(select(Asunto))
-    asuntos = result.scalars().all()
-    
-    # Contar instancias para cada asunto
-    for asunto in asuntos:
-        count_result = await db.execute(
-            select(func.count(AsuntoInstancia.id)).where(AsuntoInstancia.asunto_id == asunto.id)
-        )
-        asunto.instancias = count_result.scalar() or 0
-    
-    return asuntos
+    try:
+        result = await db.execute(select(Asunto))
+        asuntos = result.scalars().all()
+        
+        # Contar instancias para cada asunto
+        response = []
+        for asunto in asuntos:
+            count_result = await db.execute(
+                select(func.count(AsuntoInstancia.id)).where(AsuntoInstancia.asunto_id == asunto.id)
+            )
+            instancias_count = count_result.scalar() or 0
+            
+            # Crear diccionario con los datos del asunto y el conteo
+            asunto_dict = {
+                "id": asunto.id,
+                "nombre": asunto.nombre,
+                "tipo": asunto.tipo,
+                "descripcion": asunto.descripcion,
+                "coordinadora": asunto.coordinadora,
+                "lugar": asunto.lugar,
+                "created_at": asunto.created_at,
+                "instancias": instancias_count
+            }
+            response.append(asunto_dict)
+        
+        print(f"✓ Asuntos obtenidos: {len(response)}")
+        return response
+    except Exception as e:
+        print(f"❌ Error en get_asuntos: {str(e)}")
+        logger.error(f"Error en get_asuntos: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al obtener asuntos: {str(e)}")
 
 @app.get("/asuntos/{asunto_id}", response_model=AsuntoDetailResponse)
 async def get_asunto(asunto_id: int, db: AsyncSession = Depends(get_db)):
     """Obtiene un asunto específico"""
-    result = await db.execute(select(Asunto).where(Asunto.id == asunto_id))
-    asunto = result.scalar_one_or_none()
-    
-    if not asunto:
-        raise HTTPException(status_code=404, detail="Asunto no encontrado")
-    
-    # Contar instancias
-    count_result = await db.execute(
-        select(func.count(AsuntoInstancia.id)).where(AsuntoInstancia.asunto_id == asunto.id)
-    )
-    asunto.instancias = count_result.scalar() or 0
-    
-    return asunto
+    try:
+        result = await db.execute(select(Asunto).where(Asunto.id == asunto_id))
+        asunto = result.scalar_one_or_none()
+        
+        if not asunto:
+            raise HTTPException(status_code=404, detail="Asunto no encontrado")
+        
+        # Contar instancias
+        count_result = await db.execute(
+            select(func.count(AsuntoInstancia.id)).where(AsuntoInstancia.asunto_id == asunto.id)
+        )
+        instancias_count = count_result.scalar() or 0
+        
+        # Crear diccionario con los datos del asunto y el conteo
+        asunto_dict = {
+            "id": asunto.id,
+            "nombre": asunto.nombre,
+            "tipo": asunto.tipo,
+            "descripcion": asunto.descripcion,
+            "coordinadora": asunto.coordinadora,
+            "lugar": asunto.lugar,
+            "created_at": asunto.created_at,
+            "instancias": instancias_count
+        }
+        
+        return asunto_dict
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en get_asunto: {str(e)}")
+        logger.error(f"Error en get_asunto: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al obtener asunto: {str(e)}")
 
 @app.post("/asuntos/", response_model=AsuntoResponse, status_code=status.HTTP_201_CREATED)
 async def create_asunto(asunto: AsuntoCreate, db: AsyncSession = Depends(get_db)):
@@ -259,17 +300,60 @@ async def delete_asunto(asunto_id: int, db: AsyncSession = Depends(get_db)):
 @app.get("/asuntos/{asunto_id}/instancias/", response_model=list[AsuntoInstanciaDetailResponse])
 async def get_instancias_por_asunto(asunto_id: int, db: AsyncSession = Depends(get_db)):
     """Obtiene todas las instancias de un asunto"""
-    result = await db.execute(select(AsuntoInstancia).where(AsuntoInstancia.asunto_id == asunto_id))
-    instancias = result.scalars().all()
-    
-    if not instancias:
-        # Verificar que el asunto exista
-        asunto_result = await db.execute(select(Asunto).where(Asunto.id == asunto_id))
-        if not asunto_result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Asunto no encontrado")
-    
-    # Contar registrados y presentes
-    for instancia in instancias:
+    try:
+        result = await db.execute(select(AsuntoInstancia).where(AsuntoInstancia.asunto_id == asunto_id))
+        instancias = result.scalars().all()
+        
+        if not instancias:
+            # Verificar que el asunto exista
+            asunto_result = await db.execute(select(Asunto).where(Asunto.id == asunto_id))
+            if not asunto_result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Asunto no encontrado")
+        
+        # Contar registrados y presentes
+        response = []
+        for instancia in instancias:
+            registrados = await db.execute(
+                select(func.count(Asistencia.id)).where(Asistencia.asunto_instancia_id == instancia.id)
+            )
+            presentes = await db.execute(
+                select(func.count(Asistencia.id)).where(
+                    (Asistencia.asunto_instancia_id == instancia.id) & (Asistencia.asistio == True)
+                )
+            )
+            
+            instancia_dict = {
+                "id": instancia.id,
+                "asunto_id": instancia.asunto_id,
+                "fecha": instancia.fecha,
+                "lugar": instancia.lugar,
+                "coordinadora": instancia.coordinadora,
+                "observaciones": instancia.observaciones,
+                "created_at": instancia.created_at,
+                "registrados": registrados.scalar() or 0,
+                "presentes": presentes.scalar() or 0
+            }
+            response.append(instancia_dict)
+        
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en get_instancias_por_asunto: {str(e)}")
+        logger.error(f"Error en get_instancias_por_asunto: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al obtener instancias: {str(e)}")
+
+@app.get("/instancias/{instancia_id}", response_model=AsuntoInstanciaDetailResponse)
+async def get_instancia(instancia_id: int, db: AsyncSession = Depends(get_db)):
+    """Obtiene una instancia específica"""
+    try:
+        result = await db.execute(select(AsuntoInstancia).where(AsuntoInstancia.id == instancia_id))
+        instancia = result.scalar_one_or_none()
+        
+        if not instancia:
+            raise HTTPException(status_code=404, detail="Instancia no encontrada")
+        
+        # Contar registrados y presentes
         registrados = await db.execute(
             select(func.count(Asistencia.id)).where(Asistencia.asunto_instancia_id == instancia.id)
         )
@@ -278,33 +362,26 @@ async def get_instancias_por_asunto(asunto_id: int, db: AsyncSession = Depends(g
                 (Asistencia.asunto_instancia_id == instancia.id) & (Asistencia.asistio == True)
             )
         )
-        instancia.registrados = registrados.scalar() or 0
-        instancia.presentes = presentes.scalar() or 0
-    
-    return instancias
-
-@app.get("/instancias/{instancia_id}", response_model=AsuntoInstanciaDetailResponse)
-async def get_instancia(instancia_id: int, db: AsyncSession = Depends(get_db)):
-    """Obtiene una instancia específica"""
-    result = await db.execute(select(AsuntoInstancia).where(AsuntoInstancia.id == instancia_id))
-    instancia = result.scalar_one_or_none()
-    
-    if not instancia:
-        raise HTTPException(status_code=404, detail="Instancia no encontrada")
-    
-    # Contar registrados y presentes
-    registrados = await db.execute(
-        select(func.count(Asistencia.id)).where(Asistencia.asunto_instancia_id == instancia.id)
-    )
-    presentes = await db.execute(
-        select(func.count(Asistencia.id)).where(
-            (Asistencia.asunto_instancia_id == instancia.id) & (Asistencia.asistio == True)
-        )
-    )
-    instancia.registrados = registrados.scalar() or 0
-    instancia.presentes = presentes.scalar() or 0
-    
-    return instancia
+        
+        instancia_dict = {
+            "id": instancia.id,
+            "asunto_id": instancia.asunto_id,
+            "fecha": instancia.fecha,
+            "lugar": instancia.lugar,
+            "coordinadora": instancia.coordinadora,
+            "observaciones": instancia.observaciones,
+            "created_at": instancia.created_at,
+            "registrados": registrados.scalar() or 0,
+            "presentes": presentes.scalar() or 0
+        }
+        
+        return instancia_dict
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error en get_instancia: {str(e)}")
+        logger.error(f"Error en get_instancia: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al obtener instancia: {str(e)}")
 
 @app.post("/instancias/", response_model=AsuntoInstanciaResponse, status_code=status.HTTP_201_CREATED)
 async def create_instancia(instancia: AsuntoInstanciaCreate, db: AsyncSession = Depends(get_db)):
