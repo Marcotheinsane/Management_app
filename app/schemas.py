@@ -1,6 +1,32 @@
 from pydantic import BaseModel, Field
 from datetime import datetime, date
 
+# ========== AUTENTICACIÓN ==========
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=50)
+    password: str = Field(..., min_length=1)
+
+class UsuarioResponse(BaseModel):
+    id: int
+    username: str
+    nombre: str
+    email: str
+    rol: str
+    
+    class Config:
+        from_attributes = True
+
+class LoginResponse(BaseModel):
+    token: str
+    user: UsuarioResponse
+
+class UsuarioCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str
+    nombre: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=6)
+    rol: str = "usuario"
+
 class PersonaBase(BaseModel):
     rut: str = Field(..., min_length=1, max_length=20)
     apellidos: str = Field(..., min_length=1, max_length=255)

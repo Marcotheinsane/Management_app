@@ -4,6 +4,20 @@ from datetime import datetime
 
 Base = declarative_base()
 
+class Usuario(Base):
+    __tablename__ = "usuarios"
+    __table_args__ = {"extend_existing": True}
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    nombre = Column(String(255), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    rol = Column(String(50), default="usuario", nullable=False)  # usuario, admin
+    activo = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
 class Persona(Base):
     __tablename__ = "personas"
     __table_args__ = {"extend_existing": True}

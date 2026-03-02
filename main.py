@@ -2,19 +2,22 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, text
 
-from app.models import Persona, Asunto, AsuntoInstancia, Asistencia, Base
+from app.models import Persona, Asunto, AsuntoInstancia, Asistencia, Base, Usuario
 from app.schemas import (
     PersonaCreate, PersonaUpdate, PersonaResponse,
     AsuntoCreate, AsuntoUpdate, AsuntoResponse, AsuntoDetailResponse,
     AsuntoInstanciaCreate, AsuntoInstanciaUpdate, AsuntoInstanciaResponse, AsuntoInstanciaDetailResponse,
-    AsistenciaCreate, AsistenciaUpdate, AsistenciaResponse, AsistenciaDetailResponse
+    AsistenciaCreate, AsistenciaUpdate, AsistenciaResponse, AsistenciaDetailResponse,
+    LoginRequest, LoginResponse, UsuarioResponse, UsuarioCreate
 )
 from app.database import get_db, engine
 from app.settings import settings
+from app.utils import hash_password, verify_password, create_access_token, decode_token
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +33,42 @@ async def lifespan(app: FastAPI):
             await conn.run_sync(Base.metadata.create_all)
         print("✓ Tablas de base de datos creadas/verificadas")
         print(f"✓ CORS permitido para: {settings.FRONTEND_URL}")
+        
+        # Crear usuarios demo si no existen
+        from app.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            # Verificar si el usuario demo existe
+            result = await session.execute(select(Usuario).where(Usuario.username == "demo"))
+            demo_user = result.scalar_one_or_none()
+            
+            if not demo_user:
+                demo_user = Usuario(
+                    username="demo",
+                    email="demo@example.com",
+                    nombre="Usuario Demo",
+                    password_hash=hash_password("demo123"),
+                    rol="usuario"
+                )
+                session.add(demo_user)
+                print("✓ Usuario demo creado")
+            
+            # Verificar si el usuario admin existe
+            result = await session.execute(select(Usuario).where(Usuario.username == "admin"))
+            admin_user = result.scalar_one_or_none()
+            
+            if not admin_user:
+                admin_user = Usuario(
+                    username="admin",
+                    email="admin@example.com",
+                    nombre="Administrador",
+                    password_hash=hash_password("admin123"),
+                    rol="admin"
+                )
+                session.add(admin_user)
+                print("✓ Usuario admin creado")
+            
+            await session.commit()
+        
         logger.info("✓ Startup completado exitosamente")
     except Exception as e:
         logger.error(f"❌ Error durante startup: {type(e).__name__}: {str(e)}", exc_info=True)
@@ -172,6 +211,118 @@ async def test_db_connection():
             "message": f"Error al conectar: {type(e).__name__}: {str(e)}",
             "error_type": type(e).__name__
         }
+
+
+# ========== FUNCIONES DE AUTENTICACIÓN ==========
+
+async def get_current_user(credentials: HTTPAuthCredentials = Depends(HTTPBearer()), db: AsyncSession = Depends(get_db)) -> Usuario:
+    """Obtiene el usuario actual desde el token JWT"""
+    token = credentials.credentials
+    payload = decode_token(token)
+    
+    if not payload:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    
+    result = await db.execute(select(Usuario).where(Usuario.id == int(user_id)))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+    
+    if not user.activo:
+        raise HTTPException(status_code=403, detail="Usuario inactivo")
+    
+    return user
+
+
+# ========== ENDPOINTS AUTENTICACIÓN ==========
+
+@app.post("/login/", response_model=LoginResponse)
+async def login(credentials: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """Autentica un usuario y devuelve un token JWT"""
+    try:
+        result = await db.execute(select(Usuario).where(Usuario.username == credentials.username))
+        usuario = result.scalar_one_or_none()
+        
+        if not usuario or not verify_password(credentials.password, usuario.password_hash):
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        
+        if not usuario.activo:
+            raise HTTPException(status_code=403, detail="Usuario inactivo")
+        
+        # Crear token JWT
+        token = create_access_token(data={"sub": str(usuario.id), "username": usuario.username})
+        
+        usuario_response = UsuarioResponse(
+            id=usuario.id,
+            username=usuario.username,
+            nombre=usuario.nombre,
+            email=usuario.email,
+            rol=usuario.rol
+        )
+        
+        return LoginResponse(token=token, user=usuario_response)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en login: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error en autenticación")
+
+
+@app.get("/me/", response_model=UsuarioResponse)
+async def get_me(usuario: Usuario = Depends(get_current_user)):
+    """Obtiene los datos del usuario autenticado"""
+    return UsuarioResponse(
+        id=usuario.id,
+        username=usuario.username,
+        nombre=usuario.nombre,
+        email=usuario.email,
+        rol=usuario.rol
+    )
+
+
+@app.post("/usuarios/", response_model=UsuarioResponse, status_code=status.HTTP_201_CREATED)
+async def create_usuario(usuario_data: UsuarioCreate, db: AsyncSession = Depends(get_db)):
+    """Crea un nuevo usuario (admin only)"""
+    try:
+        # Verificar que el username sea único
+        result = await db.execute(select(Usuario).where(Usuario.username == usuario_data.username))
+        if result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="El username ya existe")
+        
+        # Verificar que el email sea único
+        result = await db.execute(select(Usuario).where(Usuario.email == usuario_data.email))
+        if result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="El email ya existe")
+        
+        # Crear usuario
+        db_usuario = Usuario(
+            username=usuario_data.username,
+            email=usuario_data.email,
+            nombre=usuario_data.nombre,
+            password_hash=hash_password(usuario_data.password),
+            rol=usuario_data.rol
+        )
+        db.add(db_usuario)
+        await db.commit()
+        await db.refresh(db_usuario)
+        
+        return UsuarioResponse(
+            id=db_usuario.id,
+            username=db_usuario.username,
+            nombre=db_usuario.nombre,
+            email=db_usuario.email,
+            rol=db_usuario.rol
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al crear usuario: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al crear usuario")
 
 
 # ========== ENDPOINTS ASUNTOS ==========
